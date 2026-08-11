@@ -1,0 +1,29 @@
+# The action's own regression suite.
+#
+# This repository's whole security story is that `src/*.js` is exactly what executes
+# in customer pipelines — there is no bundler and no vendored dependency to audit.
+# That only holds if something actually verifies the source on the way in, which is
+# what this workflow is for: the tag ruleset protects the release, this protects
+# what gets released.
+#
+# The suite has no dependencies and makes no network calls, so it needs nothing
+# beyond a Node runtime.
+name: test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: node test/test_action.js

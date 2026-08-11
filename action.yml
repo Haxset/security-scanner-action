@@ -1,0 +1,87 @@
+name: Haxset Security Scanner
+description: >-
+  Pull-request security scanning with one-click fixes. Scans the diff for
+  vulnerabilities, hardcoded secrets, infrastructure misconfigurations and
+  vulnerable dependencies, and posts verified fixes as committable suggestions.
+author: Haxset
+
+branding:
+  icon: shield
+  color: red
+
+inputs:
+  token:
+    description: >-
+      Haxset CI token, generated in the Haxset dashboard under CI/CD. Store it as
+      a repository or organization secret and pass it here.
+    required: true
+  endpoint:
+    description: Haxset scan API endpoint. Only change this for a self-hosted deployment.
+    required: false
+    default: https://app.haxset.com/api/ci/scan
+  poll-minutes:
+    description: How long to wait for a scan to finish before giving up.
+    required: false
+    default: "60"
+  start-retries:
+    description: How many times to retry a transient failure when starting a scan.
+    required: false
+    default: "4"
+  mode:
+    description: Scan depth for a whole-repository scan (thorough or fast).
+    required: false
+    default: thorough
+  notify:
+    description: Extra comma-separated addresses to email a whole-repository report to.
+    required: false
+    default: ""
+  suggestions:
+    description: >-
+      Post verified fixes as committable review suggestions on the diff. Set to
+      "false" to receive findings with prose remediation only.
+    required: false
+    default: "true"
+  github-token:
+    description: >-
+      Token used to read the pull request and post comments. The default job token
+      is correct for almost every setup; override it only when you need comments to
+      appear under a different identity.
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  # A COMPOSITE action wrapping actions/github-script, deliberately — not a bundled
+  # JavaScript action.
+  #
+  # A `node20` action must ship a committed `dist/index.js` produced by a bundler,
+  # which means the code a customer's CI actually executes is a single minified file
+  # nobody reads. This is a security product running inside other people's
+  # pipelines with access to their source: the thing it runs must stay legible, and
+  # `src/*.js` here is exactly what executes. github-script also supplies an
+  # authenticated Octokit and @actions/core, so there are no runtime dependencies to
+  # vendor and no build step that could differ from the source in git.
+  using: composite
+  steps:
+    - name: Haxset Security Scanner
+      # ⚠️ REQUIRED, not belt-and-braces. `src/index.js` wraps its own work in a
+      # try/catch, but the `require()` below runs OUTSIDE it, and github-script's
+      # entry point is `main().catch(err => core.setFailed(...))`. So a missing
+      # file, a syntax error, or a bad `v1` tag move would turn every customer's
+      # pipeline red at once — the exact opposite of "non-blocking check". This
+      # keeps a broken publish visible in the log and harmless to the build.
+      continue-on-error: true
+      uses: actions/github-script@v7
+      env:
+        HAXSET_ACTION_PATH: ${{ github.action_path }}
+        HAXSET_TOKEN: ${{ inputs.token }}
+        HAXSET_ENDPOINT: ${{ inputs.endpoint }}
+        HAXSET_POLL_MINUTES: ${{ inputs.poll-minutes }}
+        HAXSET_START_RETRIES: ${{ inputs.start-retries }}
+        HAXSET_SCAN_MODE: ${{ inputs.mode }}
+        HAXSET_NOTIFY: ${{ inputs.notify }}
+        HAXSET_SUGGESTIONS: ${{ inputs.suggestions }}
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const run = require(`${process.env.HAXSET_ACTION_PATH}/src/index.js`);
+          await run({ github, context, core });

@@ -1,0 +1,13 @@
+# This action ships NO dependencies and NO build output, deliberately: what is in
+# git is exactly what runs in a customer's pipeline. Anything below appearing here
+# means that promise has been broken — fix the cause, do not widen this file.
+node_modules/
+dist/
+*.tgz
+package-lock.json
+
+# Local noise
+.DS_Store
+*.swp
+.idea/
+.vscode/
