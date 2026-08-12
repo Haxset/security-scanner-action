@@ -38,7 +38,7 @@
  */
 
 /** The label every AI-authored suggestion carries. Never imply human review. */
-const AI_LABEL = '🤖 AI-generated fix · verify before merging';
+const AI_LABEL = 'AI-generated fix · verify before merging';
 const VERIFIED_BADGE = '✅ **Verified** — the finding is gone after this change';
 
 /**
