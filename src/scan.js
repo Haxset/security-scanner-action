@@ -14,7 +14,7 @@ const fs = require('fs');
 const path = require('path');
 
 const { apiHint } = require('./comment');
-const { buildComment, splitFamilies } = require('./render');
+const { buildComment, buildFixComment, splitFamilies } = require('./render');
 const suggestionsModule = require('./suggestions');
 
 // Per-file and total upload gates. A file at or above FILE_LIMIT is bypassed and
@@ -151,9 +151,12 @@ async function pollScan({ cfg, core, scanId }) {
  * Run one PR scan end to end.
  *
  * @param {object} ctx {github, context, core, cfg, pr, isComment, commenter, scrub}
- * @param {object} opts {scanType, autofixFocus}
+ * @param {object} opts {scanType, autofixFocus, fixTargets, unknownIds}
  */
-async function runScan(ctx, { scanType = 'full', autofixFocus = [] } = {}) {
+async function runScan(
+  ctx,
+  { scanType = 'full', autofixFocus = [], fixTargets = [], unknownIds = [] } = {},
+) {
   const { github, context, core, cfg, pr, isComment, commenter, scrub } = ctx;
   const post = (md) => (isComment ? commenter.postNew(md) : commenter.postSticky(md));
 
@@ -278,9 +281,11 @@ async function runScan(ctx, { scanType = 'full', autofixFocus = [] } = {}) {
     isComment,
   });
 
-  const { body } = buildComment({
-    data, bypassed, refused, core, suggestionFallback: plan.fallbackMarkdown,
-  });
+  const { body } = data.fix_only
+    ? buildFixComment({ data, requested: fixTargets, unknownIds, core })
+    : buildComment({
+      data, bypassed, refused, core, suggestionFallback: plan.fallbackMarkdown,
+    });
   await post(body);
 
   // Posted AFTER the summary so the review comments read as annotations on an

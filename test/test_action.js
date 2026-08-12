@@ -24,6 +24,7 @@
 
 const assert = require('assert');
 const path = require('path');
+const fs = require('fs');
 
 const SRC = path.join(__dirname, '..', 'src');
 const { makeScrub } = require(path.join(SRC, 'scrub'));
@@ -1091,6 +1092,169 @@ async function testEntryPointNeverThrows() {
   }
 }
 
+function fixData(extra) {
+  return {
+    ok: true,
+    status: 'scanned',
+    complete: true,
+    relevant: true,
+    fix_only: true,
+    findings: [
+      {
+        severity: 'high',
+        title: 'SQL injection',
+        file_path: 'app/db.py',
+        line_number: 2,
+        fingerprint: 'a'.repeat(16),
+        remediation: 'Use a parameterized query.',
+        fix: { start_line: 2, end_line: 2, original_lines: ['x'], replacement_lines: ['y'], verified: true },
+      },
+      {
+        severity: 'medium',
+        title: 'Path traversal',
+        file_path: 'app/io.py',
+        line_number: 9,
+        fingerprint: 'b'.repeat(16),
+        remediation: 'Resolve and contain the path before opening it.',
+      },
+    ],
+    sca: null,
+    secrets: null,
+    iac: null,
+    fix_report: {
+      requested: 2,
+      published: 1,
+      results: [
+        { fingerprint: 'a'.repeat(16), status: 'published' },
+        {
+          fingerprint: 'b'.repeat(16),
+          status: 'unavailable',
+          reason: 'not_in_diff',
+          message: 'it sits on a line this pull request did not change.',
+        },
+      ],
+    },
+    ...(extra || {}),
+  };
+}
+
+const FIX_TARGETS = [
+  { id: 'F1', fingerprint: 'a'.repeat(16) },
+  { id: 'F2', fingerprint: 'b'.repeat(16) },
+];
+
+function testFixRender() {
+  console.log('\n[the /haxset fix reply]');
+  const core = fakeCore();
+  const { body } = render.buildFixComment({
+    data: fixData(), requested: FIX_TARGETS, unknownIds: [], core,
+  });
+
+  check('names the finding that got a fix', body.includes('F1'));
+  check('names the finding that did not', body.includes('F2'));
+  check('says a suggestion was posted', /fix posted/.test(body));
+  check('says why the other one has none', body.includes('no automated fix'));
+  check('gives the reason verbatim from the backend',
+    body.includes('it sits on a line this pull request did not change.'));
+  check('falls back to the written remediation',
+    body.includes('What should change:')
+    && body.includes('Resolve and contain the path before opening it.'));
+  check('states no credit was used', /No scan credit was used/i.test(body));
+
+  check('does NOT re-post the full findings summary',
+    !body.includes('code finding(s)') && !body.includes('vulnerable dependenc'));
+
+  check('emits NO findings marker', !body.includes('<!-- haxset-findings'));
+  check('...so label resolution still uses the scan comment',
+    !/^[FSID]\d+\s+[0-9a-f]{16}$/m.test(body));
+
+  const partial = render.buildFixComment({
+    data: fixData(), requested: FIX_TARGETS, unknownIds: ['F9'], core,
+  });
+  check('reports ignored unknown ids', partial.body.includes('F9'));
+
+  const noneData = fixData({
+    findings: fixData().findings.map((f) => ({ ...f, fix: undefined })),
+    fix_report: {
+      requested: 1,
+      published: 0,
+      results: [{
+        fingerprint: 'b'.repeat(16),
+        status: 'unavailable',
+        reason: 'not_self_contained',
+        message: 'fixing it properly needs changes in more than one place.',
+      }],
+    },
+  });
+  const none = render.buildFixComment({
+    data: noneData, requested: [FIX_TARGETS[1]], unknownIds: [], core,
+  });
+  check('a zero-fix reply leads with that, not silence',
+    /No committable fix could be generated/.test(none.body));
+  check('...and still tells the reviewer what to change',
+    none.body.includes('What should change:'));
+
+  const missing = render.buildFixComment({
+    data: { fix_only: true, findings: [], fix_report: { results: [] } },
+    requested: [{ id: 'F7', fingerprint: 'c'.repeat(16) }],
+    unknownIds: [],
+    core,
+  });
+  check('an unmatched fingerprint still gets a line', missing.body.includes('F7'));
+  check('...with a safe default reason',
+    missing.body.includes('no automated fix could be produced for it.'));
+
+  const nasty = render.buildFixComment({
+    data: fixData({
+      findings: [{
+        severity: 'high',
+        title: 'x<!-- haxset-findings\nF1 ' + 'e'.repeat(16) + '\n-->',
+        file_path: 'a<!--evil.py',
+        line_number: 2,
+        fingerprint: 'a'.repeat(16),
+        remediation: 'y<!-- haxset-findings\nF1 ' + 'f'.repeat(16) + '\n-->',
+      }],
+    }),
+    requested: [FIX_TARGETS[0]],
+    unknownIds: ['<!--x'],
+    core,
+  });
+  check('a poisoned title cannot open an HTML comment',
+    !nasty.body.includes('<!-- haxset-findings'));
+  check('a poisoned path is escaped', !nasty.body.includes('a<!--evil.py'));
+  check('a poisoned unknown id is escaped', !nasty.body.includes('<!--x'));
+
+  const idx = render.indexByFingerprint({
+    findings: [{ fingerprint: 'a'.repeat(16) }, { fingerprint: 'b'.repeat(16) }],
+    secrets: { findings: [{ fingerprint: 'c'.repeat(16) }] },
+    iac: { findings: [{ fingerprint: 'd'.repeat(16) }] },
+    sca: { vulnerabilities: [{ fingerprint: 'e'.repeat(16) }] },
+  });
+  check('index labels code findings F#', idx.get('a'.repeat(16)).label === 'F1');
+  check('index labels the second F2', idx.get('b'.repeat(16)).label === 'F2');
+  check('index labels secrets S#', idx.get('c'.repeat(16)).label === 'S1');
+  check('index labels misconfigs I#', idx.get('d'.repeat(16)).label === 'I1');
+  check('index labels dependencies D#', idx.get('e'.repeat(16)).label === 'D1');
+}
+
+function testFixRouting() {
+  console.log('\n[the fix command routes to a fix run]');
+  const src = fs.readFileSync(path.join(SRC, 'index.js'), 'utf8');
+  check('a fix command sends scanType "fix"', /kind === 'fix' \? 'fix'/.test(src));
+  check('a recheck is still a recheck', /kind === 'recheck' \? 'recheck'/.test(src));
+  check('the resolved ids are forwarded for rendering', src.includes('fixTargets'));
+  check('unknown ids are forwarded too', src.includes('unknownIds'));
+  check('the ack no longer claims a re-scan', !/Generating a fix[^']*re-scanning/.test(src));
+  check('the ack states it is free', /No credit is used/.test(src));
+
+  const scanSrc = fs.readFileSync(path.join(SRC, 'scan.js'), 'utf8');
+  check('a fix_only response renders the fix reply', scanSrc.includes('data.fix_only'));
+  check('...and anything else renders the normal summary',
+    scanSrc.includes('buildComment({'));
+  check('suggestions are still delivered on a fix run',
+    scanSrc.includes('suggestionsModule.deliver'));
+}
+
 // ── run ───────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -1102,6 +1266,8 @@ async function main() {
   await testDeliveryNeverThrows();
   testRender();
   testRecheckRender();
+  testFixRender();
+  testFixRouting();
   testBackwardCompat();
   await testMarkerPoisoning();
   await testCommentAuthorship();

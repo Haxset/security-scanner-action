@@ -95,6 +95,8 @@ async function main({ github, context, core }) {
   // has never heard of. An unresolvable id is reported rather than silently
   // dropped — otherwise the command would appear to work and produce nothing.
   let autofixFocus = [];
+  let fixTargets = [];
+  let unknownIds = [];
   if (isComment && command && command.kind === 'fix') {
     if (!command.ids.length) {
       await commenter.postNew('## Haxset Security Scanner\n\nInclude the finding id, e.g. '
@@ -114,26 +116,22 @@ async function main({ github, context, core }) {
       return;
     }
     autofixFocus = resolved.map((r) => r.fingerprint);
-    let note = '## Haxset Security Scanner\n\nGenerating a fix for '
-      + `${resolved.map((r) => '`' + r.id + '`').join(', ')} — re-scanning the latest commit.`;
-    if (unknown.length) {
-      note += `\n\nIgnored unknown id(s): ${unknown.map((u) => '`' + u + '`').join(', ')}.`;
-    }
-    note += '\n\nA fix can only be offered for a finding on a line this pull request changed. '
-      + 'If it sits on untouched code there is nothing to attach a suggestion to, and the '
-      + 'written remediation stays your best guide.';
-    await commenter.postNew(note);
+    fixTargets = resolved;
+    unknownIds = unknown;
+    await commenter.postNew('## Haxset Security Scanner\n\nGenerating a fix for '
+      + `${resolved.map((r) => '`' + r.id + '`').join(', ')}. No credit is used.`);
   }
 
   // ── Scan ────────────────────────────────────────────────────────────────────
-  const scanType = (isComment && command && command.kind === 'recheck') ? 'recheck' : 'full';
-  if (isComment && !autofixFocus.length) {
+  const kind = (isComment && command) ? command.kind : null;
+  const scanType = kind === 'recheck' ? 'recheck' : (kind === 'fix' ? 'fix' : 'full');
+  if (isComment && scanType !== 'fix') {
     await commenter.postNew(scanType === 'recheck'
       ? '## Haxset Security Scanner\n\nRe-checking previously found issues on the latest commit.'
       : '## Haxset Security Scanner\n\nRe-scan requested - scanning the latest commit.');
   }
 
-  await runScan(ctx, { scanType, autofixFocus });
+  await runScan(ctx, { scanType, autofixFocus, fixTargets, unknownIds });
 }
 
 /**

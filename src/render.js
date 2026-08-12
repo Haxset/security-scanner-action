@@ -307,6 +307,88 @@ function buildComment({ data, bypassed, refused, core, suggestionFallback }) {
   return { body, families, markerLines };
 }
 
+function indexByFingerprint(data) {
+  const families = splitFamilies(data);
+  const map = new Map();
+  const add = (items, prefix) => (items || []).forEach((f, idx) => {
+    if (f && f.fingerprint) {
+      map.set(String(f.fingerprint).toLowerCase(), { finding: f, label: `${prefix}${idx + 1}` });
+    }
+  });
+  add(families.secrets, 'S');
+  add(families.findings, 'F');
+  add(families.iac, 'I');
+  add(families.sca, 'D');
+  return map;
+}
+
+function buildFixComment({ data, requested, unknownIds, core }) {
+  const report = data.fix_report || {};
+  const byFp = new Map(
+    (report.results || []).map((r) => [String(r.fingerprint || '').toLowerCase(), r]),
+  );
+  const index = indexByFingerprint(data);
+  const asked = requested || [];
+
+  let body = '## Haxset Security Scanner\n\n';
+  const published = asked.filter(
+    (r) => (byFp.get(String(r.fingerprint).toLowerCase()) || {}).status === 'published',
+  ).length;
+
+  body += published
+    ? `Posted ${published} committable fix${published === 1 ? '' : 'es'} on the diff above`
+      + `${published < asked.length ? `, and could not generate ${asked.length - published} more` : ''}.\n\n`
+    : `No committable fix could be generated for ${asked.length === 1 ? 'this finding' : 'these findings'}. `
+      + 'The written remediation is below.\n\n';
+
+  for (const { id, fingerprint } of asked) {
+    const fp = String(fingerprint || '').toLowerCase();
+    const entry = index.get(fp);
+    const finding = (entry && entry.finding) || {};
+    const result = byFp.get(fp) || {};
+    const label = id || (entry && entry.label) || '?';
+    const sev = String(finding.severity || '').toUpperCase();
+    const title = safeText(finding.title || 'this finding', 300);
+    const where = finding.file_path
+      ? ` (<code>${safeText(loc(finding), 300)}</code>)` : '';
+
+    if (result.status === 'published') {
+      body += `<details open>\n<summary>🛠️ <b>${label}</b> — fix posted`
+        + `${sev ? ` · ${EMO[finding.severity] || '⚪'} ${sev}` : ''} — ${title}${where}`
+        + '</summary>\n\n';
+      body += 'A committable suggestion is attached to this line in the diff above — '
+        + 'use **Commit suggestion** to apply it.\n\n';
+      body += '</details>\n\n';
+      continue;
+    }
+
+    body += `<details open>\n<summary>⚠️ <b>${label}</b> — no automated fix`
+      + `${sev ? ` · ${EMO[finding.severity] || '⚪'} ${sev}` : ''} — ${title}${where}`
+      + '</summary>\n\n';
+    body += `A one-click fix could not be generated because ${safeText(
+      result.message || 'no automated fix could be produced for it.', 600,
+    )}\n\n`;
+    if (finding.remediation) {
+      body += `**What should change:** ${safeText(finding.remediation)}\n\n`;
+    } else if (finding.description) {
+      body += `${safeText(finding.description)}\n\n`;
+    }
+    body += '</details>\n\n';
+    if (core && finding.file_path) {
+      core.info(`Haxset: no fix generated for ${label} — ${result.reason || 'unknown'}`);
+    }
+  }
+
+  if (unknownIds && unknownIds.length) {
+    body += `<sub>Ignored unknown id(s): ${unknownIds
+      .map((u) => '<code>' + safeText(String(u), 20) + '</code>').join(', ')}.</sub>\n\n`;
+  }
+  body += '<sub>Fixes are AI-generated and verified against the patched code before being '
+    + 'offered — review them before merging. No scan credit was used.</sub>';
+  return { body };
+}
+
 module.exports = {
   EMO, artifactEntries, splitFamilies, buildComment, renderFamily, renderSca, safeText,
+  buildFixComment, indexByFingerprint,
 };
