@@ -40,6 +40,7 @@
 /** The label every AI-authored suggestion carries. Never imply human review. */
 const AI_LABEL = 'AI-generated fix · verify before merging';
 const VERIFIED_BADGE = '✅ **Verified** — the finding is gone after this change';
+const DELETION_NOTE = '**This suggestion deletes the line(s) above.**';
 
 /**
  * Collect the findings that carry a usable fix, in display order.
@@ -54,7 +55,7 @@ function collectFixes(sections) {
   for (const { prefix, items } of sections) {
     (items || []).forEach((f, idx) => {
       const fix = f && f.fix;
-      if (!fix || !Array.isArray(fix.replacement_lines) || !fix.replacement_lines.length) return;
+      if (!fix || !Array.isArray(fix.replacement_lines)) return;
       if (!f.file_path || !fix.start_line || !fix.end_line) return;
       out.push({ label: `${prefix}${idx + 1}`, finding: f, fix });
     });
@@ -133,12 +134,16 @@ function suggestionBody({ label, finding, fix }) {
   const title = safeProse(finding.title, 200) || 'Security finding';
   parts.push(`**${sev} · \`${label}\`** — ${title}`);
   if (fix.verified) parts.push(VERIFIED_BADGE);
+  if (!fix.replacement_lines.length) parts.push(DELETION_NOTE);
   if (fix.note) parts.push(safeProse(fix.note));
   // The suggestion block itself. Content is emitted verbatim: the backend proved
   // it byte-matches the file, so any normalization here would break that promise.
   // Only the FENCE adapts — see fenceFor.
   const fence = fenceFor(fix.replacement_lines);
-  parts.push(fence + 'suggestion\n' + fix.replacement_lines.join('\n') + '\n' + fence);
+  const lines = fix.replacement_lines;
+  parts.push(lines.length
+    ? fence + 'suggestion\n' + lines.join('\n') + '\n' + fence
+    : fence + 'suggestion\n' + fence);
   parts.push(`<sub>${AI_LABEL}</sub>`);
   return parts.join('\n\n');
 }
@@ -404,7 +409,7 @@ async function deliver({ github, context, core, pr, headSha, plan, salvage }) {
 }
 
 module.exports = {
-  AI_LABEL, VERIFIED_BADGE,
+  AI_LABEL, VERIFIED_BADGE, DELETION_NOTE,
   collectFixes, suggestionBody, reviewComment, fencedDiff, fenceFor, safeProse,
   isForkPr, canPostSuggestions, fallbackMarkdown,
   planSuggestions, deliver, postReview,

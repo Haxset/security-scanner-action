@@ -244,12 +244,12 @@ function testCollectFixes() {
     { prefix: 'F', items: [without, withFix, emptyFix, noPath] },
     { prefix: 'I', items: [finding({ fix: fix() })] },
   ]);
-  check('only findings with a usable fix are collected', got.length === 2, String(got.length));
+  check('only findings with a usable fix are collected', got.length === 3, String(got.length));
   check('the label matches the finding POSITION in its family',
     got[0].label === 'F2', got[0].label);
-  check('the IaC family uses the I prefix', got[1].label === 'I1', got[1].label);
-  check('a fix with no replacement lines is skipped',
-    !got.some((g) => g.finding === emptyFix));
+  check('the IaC family uses the I prefix', got[2].label === 'I1', got[2].label);
+  check('a fix with no replacement lines is a deletion, not a skip',
+    got.some((g) => g.finding === emptyFix));
   check('a fix with no file path is skipped', !got.some((g) => g.finding.file_path === null));
   check('an empty input yields nothing', suggestions.collectFixes([]).length === 0);
   check('a null items list does not throw',
@@ -1237,6 +1237,54 @@ function testFixRender() {
   check('index labels dependencies D#', idx.get('e'.repeat(16)).label === 'D1');
 }
 
+function testDeletionSuggestions() {
+  console.log('\n[deletion suggestions]');
+  const finding = {
+    severity: 'high', title: 'TLS verification disabled', file_path: 'app/x.py', line_number: 2,
+  };
+  const fix = {
+    start_line: 2,
+    end_line: 2,
+    original_lines: ['requests.get(url, verify=False)'],
+    replacement_lines: [],
+    verified: true,
+  };
+
+  const entries = suggestions.collectFixes([{ prefix: 'F', items: [{ ...finding, fix }] }]);
+  check('a deletion fix is collected, not skipped', entries.length === 1);
+
+  const body = suggestions.suggestionBody({ label: 'F1', finding, fix });
+  check('the block is an EMPTY suggestion (how GitHub expresses a deletion)',
+    body.includes('```suggestion\n```'), JSON.stringify(body.slice(-120)));
+  check('...not a suggestion containing a blank line',
+    !body.includes('```suggestion\n\n```'));
+  check('the reviewer is told it deletes', body.includes(suggestions.DELETION_NOTE));
+  check('...and it still carries the verified badge',
+    body.includes(suggestions.VERIFIED_BADGE));
+
+  const comment = suggestions.reviewComment({ label: 'F1', finding, fix });
+  check('it still produces a postable review comment', comment !== null);
+  check('...anchored to the deleted line', comment && comment.line === 2);
+
+  const fenced = suggestions.fencedDiff({ label: 'F1', finding, fix });
+  check('the fork fallback shows removal only',
+    fenced.includes('-requests.get(url, verify=False)') && !fenced.includes('\n+'));
+
+  const replacement = {
+    ...fix, replacement_lines: ['requests.get(url, verify=True)'], verified: true,
+  };
+  const rbody = suggestions.suggestionBody({ label: 'F1', finding, fix: replacement });
+  check('a normal replacement is unchanged',
+    rbody.includes('```suggestion\nrequests.get(url, verify=True)\n```'));
+  check('...and is NOT labelled a deletion',
+    !rbody.includes(suggestions.DELETION_NOTE));
+
+  const noFix = suggestions.collectFixes([
+    { prefix: 'F', items: [{ ...finding, fix: { ...fix, replacement_lines: null } }] },
+  ]);
+  check('a malformed replacement list is still skipped', noFix.length === 0);
+}
+
 function testFixRouting() {
   console.log('\n[the fix command routes to a fix run]');
   const src = fs.readFileSync(path.join(SRC, 'index.js'), 'utf8');
@@ -1267,6 +1315,7 @@ async function main() {
   testRender();
   testRecheckRender();
   testFixRender();
+  testDeletionSuggestions();
   testFixRouting();
   testBackwardCompat();
   await testMarkerPoisoning();
