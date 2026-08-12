@@ -141,9 +141,9 @@ function truncateBody(md) {
 const FINDINGS_MARKER_RE = /<!-- haxset-findings\n([\s\S]*?)\n-->/g;
 
 /**
- * @param {object} deps  {github, context, core, pr, runUrl}
+ * @param {object} deps  {github, context, core, pr}
  */
-function makeCommenter({ github, context, core, pr, runUrl }) {
+function makeCommenter({ github, context, core, pr }) {
   // ⚠️ WHOSE COMMENTS WE TRUST. Both the sticky comment and the hidden
   // fingerprint marker are read back out of the PR's comment list, and neither
   // read used to check WHO wrote the comment. Two consequences, both silent:
@@ -192,9 +192,7 @@ function makeCommenter({ github, context, core, pr, runUrl }) {
     // middle is what a reviewer can most afford to lose.
     const md_ = truncateBody(md);
     const footer =
-      '\n\n---\nCommands: `/haxset scan` (full scan) · `/haxset check` (re-check fixes) · '
-      + '`/haxset fix F1` (get a one-click fix) · `/haxset help` (all commands). '
-      + `You can also [re-run the check](${runUrl}).`;
+      '\n\n---\nCommands: `/haxset check` (re-check fixes) · `/haxset help` (all commands).';
     return STICKY_MARKER + (sticky ? '\n' + STICKY_ONLY_MARKER : '') + '\n' + md_ + footer;
   }
 

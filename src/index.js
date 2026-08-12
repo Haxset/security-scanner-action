@@ -31,8 +31,6 @@ const ALLOWED_ASSOCIATIONS = ['OWNER', 'MEMBER', 'COLLABORATOR'];
 async function main({ github, context, core }) {
   const cfg = loadConfig();
   const scrub = makeScrub(cfg.token);
-  const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}`
-    + `/actions/runs/${context.runId}`;
 
   // ── The "Run workflow" button ───────────────────────────────────────────────
   // A whole-repository scan needs no pull request, so it is dispatched BEFORE any
@@ -70,7 +68,7 @@ async function main({ github, context, core }) {
 
   if (!pr) { core.info('Not a pull request - skipping.'); return; }
 
-  const commenter = makeCommenter({ github, context, core, pr, runUrl });
+  const commenter = makeCommenter({ github, context, core, pr });
   const ctx = { github, context, core, cfg, pr, isComment, commenter, scrub };
 
   // ── Command routing ─────────────────────────────────────────────────────────
